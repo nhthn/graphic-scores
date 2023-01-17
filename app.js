@@ -94,7 +94,7 @@ function zigzagify(segment, rng) {
     const dx = Math.abs(point2.x - point1.x);
     const dy = Math.abs(point2.y - point1.y);
     let pointMiddle1;
-    let pointMiddle12;
+    let pointMiddle2;
     if (dx >= dy) {
         let middleY = rng.uniform(point1.y, point2.y);
         pointMiddle1 = { x: point1.x, y: middleY };
@@ -111,14 +111,32 @@ function zigzagify(segment, rng) {
     ]
 }
 
-const PATH_TYPES = ["line", "manhattan1", "manhattan2", "zigzag"];
+function diagonalify(segment) {
+    const point1 = segment[0];
+    const point2 = segment[1];
+    const dx = Math.abs(point2.x - point1.x);
+    const dy = Math.abs(point2.y - point1.y);
+    let pointMiddle;
+    if (dx >= dy) {
+        pointMiddle = { x: point1.x + dy * Math.sign(point2.x - point1.x), y: point1.y };
+    } else {
+        pointMiddle = { x: point1.x, y: point1.y + dx * Math.sign(point2.y - point1.y)};
+    }
+    return [
+        [point1, pointMiddle],
+        [pointMiddle, point2]
+    ]
+}
+
+const PATH_TYPES = ["line", "manhattan1", "manhattan2", "zigzag", "diagonal"];
 
 function pickPath(segment, existingSegments, rng, weights) {
     const pathTypes = {
         line: [segment],
         manhattan1: manhattanize(segment, false),
         manhattan2: manhattanize(segment, true),
-        zigzag: zigzagify(segment, rng)
+        zigzag: zigzagify(segment, rng),
+        diagonal: diagonalify(segment),
     };
     const candidatePaths = [];
     for (let pathType of Object.keys(weights)) {
@@ -151,19 +169,21 @@ function generate(seed) {
     const rng = new RNG(seed);
     const width = 1000;
     const height = 500;
-    const pointCount = 100;
-    const margin = 200;
-    const density = rng.uniform(0.1, 0.5);
+    const pointCount = rng.integer(30, 100);
+    const poissonRadius = 100;
+    const margin = 30;
+    const density = rng.uniform(0.3, 0.8);
     const dotDensity = rng.random();
-    const arcProbability = rng.random();
+    const arcProbability = rng.choose([rng.random(), 0]);
 
     const pathTypeWeights = {};
+    const power = rng.uniform(1, 5);
     for (let pathType of PATH_TYPES) {
-        pathTypeWeights[pathType] = rng.random();
+        pathTypeWeights[pathType] = Math.pow(rng.random(), power);
     }
 
     const draw = SVG().addTo("body").size(width, height);
-    const points = generatePoissonDiskSamples(rng, pointCount, width, height, margin, 50);
+    const points = generatePoissonDiskSamples(rng, pointCount, width, height, poissonRadius, margin);
     const pairs = [];
     for (i = 0; i < points.length; i++) {
         let j;
@@ -206,16 +226,41 @@ function generate(seed) {
 
     for (let point of points) {
         if (rng.random() < dotDensity) {
-            const radius = rng.choose([3, 5, 10]);
-            const strokeWidth = 2;
-            const dot = draw.ellipse(radius, radius).attr({ cx: point.x, cy: point.y });
-            if (rng.random() < 0.5) {
-                dot.fill("white").stroke({ width: strokeWidth, color: "black" });
+            const type = rng.choose(["dot", "rectangle", "triangle"]);
+            if (type === "dot") {
+                const radius = rng.choose([3, 5, 10]);
+                const strokeWidth = 2;
+                const dot = draw.ellipse(radius, radius).attr({ cx: point.x, cy: point.y });
                 if (rng.random() < 0.5) {
-                    draw.ellipse(radius - strokeWidth * 3, radius - strokeWidth * 3)
-                        .attr({ cx: point.x, cy: point.y })
-                        .fill("black");
+                    dot.fill("white").stroke({ width: strokeWidth, color: "black" });
+                    if (rng.random() < 0.5) {
+                        draw.ellipse(radius - strokeWidth * 3, radius - strokeWidth * 3)
+                            .attr({ cx: point.x, cy: point.y })
+                            .fill("black");
+                    }
                 }
+            } else if (type === "rectangle") {
+                const size = rng.choose([3, 5, 10]);
+                const rect = draw.rect(size, size)
+                    .attr({ x: point.x - size / 2, y: point.y - size / 2 })
+                    .fill("white")
+                    .stroke({ width: 1.5, color: "black" });
+                if (rng.random() < 0.5) {
+                    rect.rotate(45);
+                }
+            } else if (type === "triangle") {
+                const size = rng.choose([10, 15]);
+                const offset = rng.choose([0, Math.PI]);
+                const theta = 2 * Math.PI / 3;
+                draw.path(`
+                    M ${Math.cos(offset) * size} ${Math.sin(offset) * size}
+                    L ${Math.cos(offset + theta) * size} ${Math.sin(offset + theta) * size}
+                    L ${Math.cos(offset + 2 * theta) * size} ${Math.sin(offset + 2 * theta) * size}
+                    z
+                `)
+                    .translate(point.x, point.y)
+                    .fill("white")
+                    .stroke({ width: 1.5, color: "black" });
             }
         }
     }
