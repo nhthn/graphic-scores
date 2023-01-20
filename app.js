@@ -61,14 +61,67 @@ function doLineSegmentsIntersect(segment1, segment2) {
     const b2 = point3.y - point4.y;
     const c2 = point3.y - point1.y;
 
-    const d = a1 * b2 - b1 * a2
+    const d = a1 * b2 - b1 * a2;
+    if (Math.abs(d) < 1e-8) {
+        return false;
+    }
     const t1 = (c1 * b2 - b1 * c2) / d;
     const t2 = (a1 * c2 - c1 * a2) / d;
     return 0 < t1 && t1 < 1 && 0 < t2 && t2 < 1;
 }
 
+// https://stackoverflow.com/a/2824596
+function getPointSegmentDistance(point, segment) {
+    let dx = segment[1].x - segment[0].x;
+    let dy = segment[1].y - segment[0].y;
+    if (Math.abs(dx) < 1e-8 && Math.abs(dy) < 1e-8) {
+        return Math.hypot(point.x - segment[0].x, point.y - segment[0].y);
+    }
+    const t = ((point.x - segment[0].x) * dx + (point.y - segment[0].y) * dy) / (dx * dx + dy * dy);
+    if (t < 0) {
+        dx = point.x - segment[0].x;
+        dy = point.y - segment[0].y;
+    } else if (t > 1) {
+        dx = point.x - segment[1].x;
+        dy = point.y - segment[1].y;
+    } else {
+        const nearestX = segment[0].x + t * dx;
+        const nearestY = segment[0].y + t * dy;
+        dx = point.x - nearestX;
+        dy = point.y - nearestY;
+    }
+    return Math.hypot(dx, dy);
+}
+
+function getSegmentsDistance(segment1, segment2) {
+    if (doLineSegmentsIntersect(segment1, segment2)) {
+        return 0;
+    }
+    return Math.min.apply(null, [
+        getPointSegmentDistance(segment1[0], segment2),
+        getPointSegmentDistance(segment1[1], segment2),
+        getPointSegmentDistance(segment2[0], segment1),
+        getPointSegmentDistance(segment2[1], segment1)
+    ]);
+}
+
 function distance(point1, point2) {
     return Math.hypot(point2.x - point1.x, point2.y - point1.y);
+}
+
+function doPointSegmentJoin(point, segment) {
+    const epsilon = 1e-8;
+    return (
+        distance(point, segment[0]) < epsilon
+        || distance(point, segment[1]) < epsilon
+    );
+}
+
+function doSegmentsJoin(segment1, segment2) {
+    return (
+        doPointSegmentJoin(segment1[0], segment2)
+        || doPointSegmentJoin(segment1[1], segment2)
+    );
 }
 
 function generatePoissonDiskSamples(rng, count, width, height, radius, margin) {
@@ -146,7 +199,7 @@ function diagonalify(segment) {
 
 const PATH_TYPES = ["line", "manhattan1", "manhattan2", "zigzag", "diagonal"];
 
-function pickPath(segment, existingSegments, rng, weights) {
+function pickPath(segment, nodes, existingSegments, rng, weights) {
     const pathTypes = {
         line: [segment],
         manhattan1: manhattanize(segment, false),
@@ -162,10 +215,15 @@ function pickPath(segment, existingSegments, rng, weights) {
     }
     rng.shuffle(candidatePaths);
 
-    function pathIntersects(path) {
+    function pathTooClose(path) {
         for (let segmentA of path) {
+            for (let node of nodes) {
+                if (!doPointSegmentJoin(node, segmentA) && getPointSegmentDistance(node, segmentA) < 20) {
+                    return true;
+                }
+            }
             for (let segmentB of existingSegments) {
-                if (doLineSegmentsIntersect(segmentA, segmentB)) {
+                if (!doSegmentsJoin(segmentA, segmentB) && getSegmentsDistance(segmentA, segmentB) < 20) {
                     return true;
                 }
             }
@@ -174,7 +232,7 @@ function pickPath(segment, existingSegments, rng, weights) {
     };
 
     for (let path of candidatePaths) {
-        if (!pathIntersects(path)) {
+        if (!pathTooClose(path)) {
             return path;
         }
     }
@@ -257,18 +315,15 @@ function generateSeedString() {
 
 const NODE_TYPES = ["dot", "rectangle", "triangle", "label"];
 const CURVE_TYPES = ["line", "arc", "squiggle"];
+const CANVAS_WIDTH = 700;
+const CANVAS_HEIGHT = 400;
 
 function generate(seedString) {
     const seed = parseInt(seedString, 10);
 
     const rng = new RNG(seed);
-    /*
-    const width = 1080;
-    const height = 720;
-    const pointCount = rng.integer(30, 100);
-    */
-    const width = 700;
-    const height = 400;
+    const width = CANVAS_WIDTH;
+    const height = CANVAS_HEIGHT;
     const pointCount = rng.integer(30, 60);
 
     const poissonRadius = 50;
@@ -310,7 +365,7 @@ function generate(seedString) {
     const segments = [];
     for (let pair of pairs) {
         if (rng.random() < density) {
-            const path = pickPath(pair, segments, rng, pathTypeWeights);
+            const path = pickPath(pair, points, segments, rng, pathTypeWeights);
             if (path !== null) {
                 const width = 1.5;
                 const type = rng.chooseWeighted(CURVE_TYPES, curveTypeWeights);
@@ -406,6 +461,16 @@ function generate(seedString) {
     return draw;
 }
 
+function updateSize(draw) {
+    const ratio = Math.min(
+        window.innerWidth / CANVAS_WIDTH,
+        window.innerHeight / CANVAS_HEIGHT
+    );
+    draw.node.setAttribute("width", ratio * CANVAS_WIDTH);
+    draw.node.setAttribute("height", ratio * CANVAS_HEIGHT);
+    draw.node.setAttribute("viewBox", `0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`);
+}
+
 function updateHash(seedString) {
     const baseURL = location.href.split("#")[0];
     location.replace(baseURL + "#" + seedString);
@@ -416,11 +481,17 @@ function main() {
         ? location.hash.substring(1)
         : generateSeedString();
     let draw = generate(seedString);
+    updateSize(draw);
+    window.addEventListener("resize", () => {
+        updateSize(draw);
+    });
+
     document.querySelector("body").addEventListener("click", () => {
         draw.remove();
         const seedString = generateSeedString();
         updateHash(seedString);
         draw = generate(seedString);
+        updateSize(draw);
     });
 }
 
