@@ -314,7 +314,7 @@ function generateSeedString() {
 }
 
 const NODE_TYPES = ["dot", "rectangle", "triangle", "label"];
-const CURVE_TYPES = ["line", "arc", "squiggle"];
+const CURVE_TYPES = ["line", "arc", "resistor"];
 const CANVAS_WIDTH = 700;
 const CANVAS_HEIGHT = 400;
 
@@ -344,7 +344,10 @@ function generate(seedString) {
 
     const curveTypeWeights = [];
     for (let curveType of CURVE_TYPES) {
-        curveTypeWeights.push(rng.uniform(0.1, 1.0));
+        const probability = curveType === "resistor" && rng.random() < 0.5
+            ? 0
+            : rng.uniform(0.1, 1.0);
+        curveTypeWeights.push(probability);
     }
 
     const draw = SVG().addTo("body").size(width, height);
@@ -369,7 +372,7 @@ function generate(seedString) {
             if (path !== null) {
                 const width = 1.5;
                 const type = rng.chooseWeighted(CURVE_TYPES, curveTypeWeights);
-                const dasharray = type === "squiggle"
+                const dasharray = type === "resistor"
                     ? null
                     : rng.random() < 0.2 ? rng.choose(["10,5", "5,5"]) : null;
                 for (let segment of path) {
@@ -382,7 +385,7 @@ function generate(seedString) {
                         path = `M ${point1.x} ${point1.y} L ${point2.x} ${point2.y}`;
                     } else if (type === "arc") {
                         path = `M ${point1.x} ${point1.y} A ${rx} ${ry} 0 0 0 ${point2.x} ${point2.y}`;
-                    } else if (type === "squiggle") {
+                    } else if (type === "resistor") {
                         path = makeResistor(segment, rng);
                     }
                     draw.path(path).fill("none").stroke({
